@@ -115,25 +115,24 @@ class WeatherApiApplicationTests {
 	void testCachingWorks() throws Exception {
 		// Create cached weather response
 		List<DayForecast> forecast = new ArrayList<>();
-		forecast.add(DayForecast.builder()
-				.date("2023-06-10")
-				.tempMax(28.5)
-				.tempMin(18.2)
-				.conditions("Clear")
-				.precipProbability(0.0)
-				.build());
+		DayForecast dayForecast = new DayForecast();
+		dayForecast.setDate("2023-06-10");
+		dayForecast.setTempMax(28.5);
+		dayForecast.setTempMin(18.2);
+		dayForecast.setConditions("Clear");
+		dayForecast.setPrecipProbability(0.0);
+		forecast.add(dayForecast);
 
-		WeatherResponse cachedResponse = WeatherResponse.builder()
-				.location("New York")
-				.resolvedAddress("New York, NY, USA")
-				.description("Clear conditions throughout the day.")
-				.currentTemp(22.5)
-				.conditions("Clear")
-				.humidity(65.2)
-				.windSpeed(5.4)
-				.forecast(forecast)
-				.source("Visual Crossing")
-				.build();
+		WeatherResponse cachedResponse = new WeatherResponse();
+		cachedResponse.setLocation("New York");
+		cachedResponse.setResolvedAddress("New York, NY, USA");
+		cachedResponse.setDescription("Clear conditions throughout the day.");
+		cachedResponse.setCurrentTemp(22.5);
+		cachedResponse.setConditions("Clear");
+		cachedResponse.setHumidity(65.2);
+		cachedResponse.setWindSpeed(5.4);
+		cachedResponse.setForecast(forecast);
+		cachedResponse.setSource("Visual Crossing");
 
 		// Mock Redis to return cached value
 		ValueOperations<String, WeatherResponse> valueOps = Mockito.mock(ValueOperations.class);

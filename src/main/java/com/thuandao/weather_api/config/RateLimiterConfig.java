@@ -14,13 +14,13 @@ import io.github.bucket4j.Refill;
 @Configuration
 public class RateLimiterConfig {
 
-    @Value("${weather.ratelimit.capacity}")
-    private long capacity;
+    @Value("${weather.ratelimit.capacity:10}")
+    private int capacity;
 
-    @Value("${weather.ratelimit.refill-tokens}")
-    private long refillTokens;
+    @Value("${weather.ratelimit.refill-tokens:1}")
+    private int refillTokens;
 
-    @Value("${weather.ratelimit.refill-time-unit}")
+    @Value("${weather.ratelimit.refill-time-unit:MINUTES}")
     private String refillTimeUnit;
 
     @Bean
@@ -29,14 +29,8 @@ public class RateLimiterConfig {
     }
 
     public Bucket createNewBucket() {
-        Duration duration = switch (refillTimeUnit.toUpperCase()) {
-            case "SECONDS" -> Duration.ofSeconds(1);
-            case "MINUTES" -> Duration.ofMinutes(1);
-            case "HOURS" -> Duration.ofHours(1);
-            default -> Duration.ofMinutes(1);
-        };
-
-        Bandwidth limit = Bandwidth.classic(capacity, Refill.greedy(refillTokens, duration));
-        return Bucket.builder().addLimit(limit).build();
+        return Bucket.builder()
+                .addLimit(Bandwidth.classic(capacity, Refill.intervally(refillTokens, Duration.ofMinutes(1))))
+                .build();
     }
 }

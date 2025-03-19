@@ -12,6 +12,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -27,6 +29,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClient.RequestHeadersSpec;
 import org.springframework.web.reactive.function.client.WebClient.RequestHeadersUriSpec;
 import org.springframework.web.reactive.function.client.WebClient.ResponseSpec;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -34,8 +37,10 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.thuandao.weather_api.config.RateLimiterConfig;
 import com.thuandao.weather_api.dto.WeatherRequest;
 import com.thuandao.weather_api.dto.WeatherResponse;
+import com.thuandao.weather_api.dto.WeatherResponse.DayForecast;
 import com.thuandao.weather_api.exception.RateLimitExceededException;
 import com.thuandao.weather_api.service.impl.WeatherServiceImpl;
+import com.thuandao.weather_api.exception.WeatherServiceException;
 
 import io.github.bucket4j.Bucket;
 import reactor.core.publisher.Mono;
@@ -110,16 +115,25 @@ public class WeatherServiceTest {
         ReflectionTestUtils.setField(weatherService, "cacheTtl", 43200L);
 
         // Create cached response
-        cachedResponse = WeatherResponse.builder()
-                .location("New York")
-                .resolvedAddress("New York, NY, USA")
-                .description("Clear conditions throughout the day.")
-                .currentTemp(22.5)
-                .conditions("Clear")
-                .humidity(65.2)
-                .windSpeed(5.4)
-                .source("Visual Crossing")
-                .build();
+        List<DayForecast> forecast = new ArrayList<>();
+        DayForecast dayForecast = new DayForecast();
+        dayForecast.setDate("2023-06-10");
+        dayForecast.setTempMax(28.5);
+        dayForecast.setTempMin(18.2);
+        dayForecast.setConditions("Clear");
+        dayForecast.setPrecipProbability(0.0);
+        forecast.add(dayForecast);
+
+        cachedResponse = new WeatherResponse();
+        cachedResponse.setLocation("New York");
+        cachedResponse.setResolvedAddress("New York, NY, USA");
+        cachedResponse.setDescription("Clear conditions throughout the day.");
+        cachedResponse.setCurrentTemp(22.5);
+        cachedResponse.setConditions("Clear");
+        cachedResponse.setHumidity(65.2);
+        cachedResponse.setWindSpeed(5.4);
+        cachedResponse.setSource("Visual Crossing");
+        cachedResponse.setForecast(forecast);
     }
 
     @Test
@@ -175,6 +189,55 @@ public class WeatherServiceTest {
 
         // Execute & verify
         assertThrows(RateLimitExceededException.class, () -> {
+            weatherService.getWeather(request);
+        });
+    }
+
+    @Test
+    void testApiErrorHandling() {
+        // Setup
+        when(mockBucket.tryConsume(1)).thenReturn(true);
+        when(valueOperations.get(anyString())).thenReturn(null);
+
+        // Setup WebClient mocking for error
+        RequestHeadersUriSpec uriSpec = mock(RequestHeadersUriSpec.class);
+        RequestHeadersSpec headersSpec = mock(RequestHeadersSpec.class);
+        ResponseSpec responseSpec = mock(ResponseSpec.class);
+
+        when(weatherWebClient.get()).thenReturn(uriSpec);
+        when(uriSpec.uri(anyString())).thenReturn(headersSpec);
+        when(headersSpec.retrieve()).thenReturn(responseSpec);
+        when(responseSpec.bodyToMono(any(Class.class))).thenThrow(
+                new WebClientResponseException(500, "Internal Server Error", null, null, null));
+
+        // Execute & verify
+        assertThrows(WeatherServiceException.class, () -> {
+            weatherService.getWeather(request);
+        });
+    }
+
+    @Test
+    void testInvalidResponseHandling() {
+        // Setup
+        when(mockBucket.tryConsume(1)).thenReturn(true);
+        when(valueOperations.get(anyString())).thenReturn(null);
+
+        // Setup WebClient mocking with invalid response
+        RequestHeadersUriSpec uriSpec = mock(RequestHeadersUriSpec.class);
+        RequestHeadersSpec headersSpec = mock(RequestHeadersSpec.class);
+        ResponseSpec responseSpec = mock(ResponseSpec.class);
+
+        when(weatherWebClient.get()).thenReturn(uriSpec);
+        when(uriSpec.uri(anyString())).thenReturn(headersSpec);
+        when(headersSpec.retrieve()).thenReturn(responseSpec);
+
+        // Create empty JSON node without required fields
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode emptyNode = mapper.createObjectNode();
+        when(responseSpec.bodyToMono(any(Class.class))).thenReturn(Mono.just(emptyNode));
+
+        // Execute & verify
+        assertThrows(WeatherServiceException.class, () -> {
             weatherService.getWeather(request);
         });
     }

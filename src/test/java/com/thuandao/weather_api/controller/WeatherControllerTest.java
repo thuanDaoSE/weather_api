@@ -25,68 +25,67 @@ import com.thuandao.weather_api.service.WeatherService;
 @WebMvcTest(WeatherController.class)
 public class WeatherControllerTest {
 
-    @Autowired
-    private MockMvc mockMvc;
+        @Autowired
+        private MockMvc mockMvc;
 
-    @MockBean
-    private WeatherService weatherService;
+        @MockBean
+        private WeatherService weatherService;
 
-    private WeatherResponse mockWeatherResponse;
+        private WeatherResponse mockWeatherResponse;
 
-    @BeforeEach
-    void setUp() {
-        List<DayForecast> forecast = new ArrayList<>();
-        forecast.add(DayForecast.builder()
-                .date("2023-06-10")
-                .tempMax(28.5)
-                .tempMin(18.2)
-                .conditions("Clear")
-                .precipProbability(0.0)
-                .build());
+        @BeforeEach
+        void setUp() {
+                List<DayForecast> forecast = new ArrayList<>();
+                DayForecast dayForecast = new DayForecast();
+                dayForecast.setDate("2023-06-10");
+                dayForecast.setTempMax(28.5);
+                dayForecast.setTempMin(18.2);
+                dayForecast.setConditions("Clear");
+                dayForecast.setPrecipProbability(0.0);
+                forecast.add(dayForecast);
 
-        mockWeatherResponse = WeatherResponse.builder()
-                .location("New York")
-                .resolvedAddress("New York, NY, USA")
-                .description("Clear conditions throughout the day.")
-                .currentTemp(22.5)
-                .conditions("Clear")
-                .humidity(65.2)
-                .windSpeed(5.4)
-                .forecast(forecast)
-                .source("Visual Crossing")
-                .build();
-    }
+                mockWeatherResponse = new WeatherResponse();
+                mockWeatherResponse.setLocation("New York");
+                mockWeatherResponse.setResolvedAddress("New York, NY, USA");
+                mockWeatherResponse.setDescription("Clear conditions throughout the day.");
+                mockWeatherResponse.setCurrentTemp(22.5);
+                mockWeatherResponse.setConditions("Clear");
+                mockWeatherResponse.setHumidity(65.2);
+                mockWeatherResponse.setWindSpeed(5.4);
+                mockWeatherResponse.setForecast(forecast);
+                mockWeatherResponse.setSource("Visual Crossing");
+        }
 
-    @Test
-    void testGetWeatherSuccess() throws Exception {
-        when(weatherService.getWeather(any(WeatherRequest.class))).thenReturn(mockWeatherResponse);
+        @Test
+        void testGetWeatherSuccess() throws Exception {
+                when(weatherService.getWeather(any(WeatherRequest.class))).thenReturn(mockWeatherResponse);
 
-        mockMvc.perform(get("/api/weather/New York"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.result").value("SUCCESS"))
-                .andExpect(jsonPath("$.data.location").value("New York"))
-                .andExpect(jsonPath("$.data.currentTemp").value(22.5))
-                .andExpect(jsonPath("$.data.forecast[0].date").value("2023-06-10"));
-    }
+                mockMvc.perform(get("/api/weather/New York"))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.result").value("SUCCESS"))
+                                .andExpect(jsonPath("$.data.location").value("New York"))
+                                .andExpect(jsonPath("$.data.currentTemp").value(22.5))
+                                .andExpect(jsonPath("$.data.forecast[0].date").value("2023-06-10"));
+        }
 
-    @Test
-    void testGetWeatherWithDate() throws Exception {
-        when(weatherService.getWeather(any(WeatherRequest.class))).thenReturn(mockWeatherResponse);
+        @Test
+        void testGetWeatherWithDate() throws Exception {
+                when(weatherService.getWeather(any(WeatherRequest.class))).thenReturn(mockWeatherResponse);
 
-        mockMvc.perform(get("/api/weather/New York?date=2023-06-10"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.result").value("SUCCESS"))
-                .andExpect(jsonPath("$.data.location").value("New York"));
-    }
+                mockMvc.perform(get("/api/weather/New York?date=2023-06-10"))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.result").value("SUCCESS"))
+                                .andExpect(jsonPath("$.data.location").value("New York"));
+        }
 
-    @Test
-    void testGetWeatherRateLimitExceeded() throws Exception {
-        when(weatherService.getWeather(any(WeatherRequest.class)))
-                .thenThrow(new RateLimitExceededException("Rate limit exceeded"));
+        @Test
+        void testGetWeatherRateLimitExceeded() throws Exception {
+                when(weatherService.getWeather(any(WeatherRequest.class)))
+                                .thenThrow(new RateLimitExceededException("Rate limit exceeded"));
 
-        mockMvc.perform(get("/api/weather/New York"))
-                .andExpect(status().isTooManyRequests())
-                .andExpect(jsonPath("$.result").value("ERROR"))
-                .andExpect(jsonPath("$.message").value("Rate limit exceeded"));
-    }
+                mockMvc.perform(get("/api/weather/New York"))
+                                .andExpect(status().isTooManyRequests())
+                                .andExpect(jsonPath("$.result").value("ERROR"))
+                                .andExpect(jsonPath("$.message").value("Rate limit exceeded"));
+        }
 }
