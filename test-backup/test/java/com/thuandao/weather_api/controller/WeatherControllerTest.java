@@ -35,25 +35,23 @@ public class WeatherControllerTest {
 
         @BeforeEach
         void setUp() {
-                List<DayForecast> forecast = new ArrayList<>();
-                DayForecast dayForecast = new DayForecast();
-                dayForecast.setDate("2023-06-10");
-                dayForecast.setTempMax(28.5);
-                dayForecast.setTempMin(18.2);
-                dayForecast.setConditions("Clear");
-                dayForecast.setPrecipProbability(0.0);
-                forecast.add(dayForecast);
+                WeatherResponse.DayForecast dayForecast = new WeatherResponse.DayForecast(
+                                "2024-03-20",
+                                25.0,
+                                15.0,
+                                "Sunny",
+                                0.0);
 
-                mockWeatherResponse = new WeatherResponse();
-                mockWeatherResponse.setLocation("New York");
-                mockWeatherResponse.setResolvedAddress("New York, NY, USA");
-                mockWeatherResponse.setDescription("Clear conditions throughout the day.");
-                mockWeatherResponse.setCurrentTemp(22.5);
-                mockWeatherResponse.setConditions("Clear");
-                mockWeatherResponse.setHumidity(65.2);
-                mockWeatherResponse.setWindSpeed(5.4);
-                mockWeatherResponse.setForecast(forecast);
-                mockWeatherResponse.setSource("Visual Crossing");
+                mockWeatherResponse = new WeatherResponse(
+                                "New York",
+                                "New York, NY",
+                                "Sunny day",
+                                20.0,
+                                "Clear",
+                                65.0,
+                                10.0,
+                                List.of(dayForecast),
+                                "OpenWeatherMap");
         }
 
         @Test
@@ -64,8 +62,8 @@ public class WeatherControllerTest {
                                 .andExpect(status().isOk())
                                 .andExpect(jsonPath("$.result").value("SUCCESS"))
                                 .andExpect(jsonPath("$.data.location").value("New York"))
-                                .andExpect(jsonPath("$.data.currentTemp").value(22.5))
-                                .andExpect(jsonPath("$.data.forecast[0].date").value("2023-06-10"));
+                                .andExpect(jsonPath("$.data.currentTemp").value(20.0))
+                                .andExpect(jsonPath("$.data.forecast[0].date").value("2024-03-20"));
         }
 
         @Test

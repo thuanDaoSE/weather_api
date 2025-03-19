@@ -4,15 +4,18 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.lenient;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -41,6 +44,10 @@ import com.thuandao.weather_api.dto.WeatherResponse.DayForecast;
 import com.thuandao.weather_api.exception.RateLimitExceededException;
 import com.thuandao.weather_api.service.impl.WeatherServiceImpl;
 import com.thuandao.weather_api.exception.WeatherServiceException;
+import com.thuandao.weather_api.config.AppConfig;
+import com.thuandao.weather_api.dto.RateLimitKey;
+import com.thuandao.weather_api.repository.RateLimitRepository;
+import com.thuandao.weather_api.config.InMemoryWeatherCache;
 
 import io.github.bucket4j.Bucket;
 import reactor.core.publisher.Mono;
@@ -63,6 +70,15 @@ public class WeatherServiceTest {
     @Mock
     private ValueOperations<String, WeatherResponse> valueOperations;
 
+    @Mock
+    private AppConfig appConfig;
+
+    @Mock
+    private RateLimitRepository rateLimitRepository;
+
+    @Mock
+    private InMemoryWeatherCache weatherCache;
+
     @InjectMocks
     private WeatherServiceImpl weatherService;
 
@@ -74,7 +90,7 @@ public class WeatherServiceTest {
     @SuppressWarnings("unchecked")
     @BeforeEach
     void setUp() throws Exception {
-        request = new WeatherRequest("New York", null);
+        request = new WeatherRequest("New York", "today", "metric");
         mockBucket = mock(Bucket.class);
 
         // Setup Redis mock
@@ -115,25 +131,23 @@ public class WeatherServiceTest {
         ReflectionTestUtils.setField(weatherService, "cacheTtl", 43200L);
 
         // Create cached response
-        List<DayForecast> forecast = new ArrayList<>();
-        DayForecast dayForecast = new DayForecast();
-        dayForecast.setDate("2023-06-10");
-        dayForecast.setTempMax(28.5);
-        dayForecast.setTempMin(18.2);
-        dayForecast.setConditions("Clear");
-        dayForecast.setPrecipProbability(0.0);
-        forecast.add(dayForecast);
+        WeatherResponse.DayForecast dayForecast = new WeatherResponse.DayForecast(
+                "2024-03-20",
+                25.0,
+                15.0,
+                "Sunny",
+                0.0);
 
-        cachedResponse = new WeatherResponse();
-        cachedResponse.setLocation("New York");
-        cachedResponse.setResolvedAddress("New York, NY, USA");
-        cachedResponse.setDescription("Clear conditions throughout the day.");
-        cachedResponse.setCurrentTemp(22.5);
-        cachedResponse.setConditions("Clear");
-        cachedResponse.setHumidity(65.2);
-        cachedResponse.setWindSpeed(5.4);
-        cachedResponse.setSource("Visual Crossing");
-        cachedResponse.setForecast(forecast);
+        cachedResponse = new WeatherResponse(
+                "New York",
+                "New York, NY",
+                "Sunny day",
+                20.0,
+                "Clear",
+                65.0,
+                10.0,
+                List.of(dayForecast),
+                "OpenWeatherMap");
     }
 
     @Test
@@ -147,7 +161,7 @@ public class WeatherServiceTest {
 
         // Verify
         assertNotNull(result);
-        assertEquals("New York", result.getLocation());
+        assertEquals("New York", result.location());
         verify(weatherRedisTemplate.opsForValue(), times(1)).get(anyString());
     }
 
@@ -173,7 +187,7 @@ public class WeatherServiceTest {
 
         // Verify
         assertNotNull(result);
-        assertEquals("New York", result.getLocation());
+        assertEquals("New York", result.location());
         verify(weatherRedisTemplate.opsForValue(), times(1)).set(anyString(), any(WeatherResponse.class),
                 any(Duration.class));
     }
@@ -238,6 +252,59 @@ public class WeatherServiceTest {
 
         // Execute & verify
         assertThrows(WeatherServiceException.class, () -> {
+            weatherService.getWeather(request);
+        });
+    }
+
+    @Test
+    void whenCacheHitThenReturnCachedResponse() {
+        // Given
+        when(weatherCache.get("New York")).thenReturn(cachedResponse);
+
+        // When
+        WeatherResponse result = weatherService.getWeather(request);
+
+        // Then
+        assertEquals(cachedResponse, result);
+        verifyNoInteractions(weatherWebClient);
+    }
+
+    @Test
+    void whenCacheMissAndApiSuccessThenReturnAndCacheResponse() {
+        // Given
+        String url = "test-url/New York?key=test-key&include=current&unitGroup=metric";
+        when(weatherCache.get("New York")).thenReturn(null);
+        when(weatherService.getRestTemplate().getForObject(eq(url), eq(String.class)))
+                .thenReturn("{\"location\":\"New York\"}");
+
+        // Mock the behavior of your weather service to return a response
+        WeatherResponse mockResponse = new WeatherResponse(
+                "New York",
+                "New York, NY, USA",
+                "Weather in New York",
+                25.0,
+                "Sunny",
+                80.0,
+                15.0,
+                Collections.emptyList(),
+                "visual-crossing");
+
+        // When
+        WeatherResponse result = weatherService.getWeather(request);
+
+        // Then
+        assertNotNull(result);
+        verify(weatherCache, times(1)).put(eq("New York"), any(WeatherResponse.class), anyDouble());
+    }
+
+    @Test
+    void whenRateLimitExceededThenThrowException() {
+        // Given
+        when(rateLimitRepository.isRateLimitExceeded(any(RateLimitKey.class), anyString(), any(Duration.class), eq(10)))
+                .thenReturn(true);
+
+        // When, Then
+        assertThrows(RateLimitExceededException.class, () -> {
             weatherService.getWeather(request);
         });
     }

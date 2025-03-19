@@ -1,24 +1,20 @@
 package com.thuandao.weather_api.service.impl;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
 import java.time.Duration;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.web.reactive.function.client.WebClientResponseException;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.thuandao.weather_api.config.RateLimiterConfig;
 import com.thuandao.weather_api.dto.WeatherRequest;
 import com.thuandao.weather_api.dto.WeatherResponse;
-import com.thuandao.weather_api.dto.WeatherResponse.DayForecast;
 import com.thuandao.weather_api.exception.RateLimitExceededException;
 import com.thuandao.weather_api.exception.WeatherServiceException;
 import com.thuandao.weather_api.service.WeatherService;
@@ -27,148 +23,159 @@ import io.github.bucket4j.Bucket;
 
 @Service
 public class WeatherServiceImpl implements WeatherService {
+
     private static final Logger logger = LoggerFactory.getLogger(WeatherServiceImpl.class);
-    private static final String CACHE_KEY_PREFIX = "weather:";
-    private static final int MAX_FORECAST_DAYS = 5;
-    private static final String API_SOURCE = "Visual Crossing";
 
     @Autowired
     private WebClient weatherWebClient;
 
     @Autowired
-    private RedisTemplate<String, WeatherResponse> weatherRedisTemplate;
+    private RedisTemplate<String, Object> redisTemplate;
 
     @Autowired
-    private RateLimiterConfig rateLimiterConfig;
-
-    @Autowired
-    private ConcurrentHashMap<String, Bucket> rateLimitBuckets;
-
-    @Value("${weather.api.url}")
-    private String apiUrl;
+    private Map<String, Bucket> rateLimitBuckets;
 
     @Value("${weather.api.key}")
     private String apiKey;
 
-    @Value("${weather.cache.ttl:43200}")
-    private Long cacheTtl;
+    @Value("${weather.api.url}")
+    private String apiUrl;
+
+    @Value("${cache.weather.ttl:3600}")
+    private long cacheTtl;
 
     @Override
+    @Cacheable(value = "weather", key = "#request.location()")
     public WeatherResponse getWeather(WeatherRequest request) {
-        String ip = "127.0.0.1"; // Replace with actual IP capture in a real app
+        String location = request.location();
+        String cacheKey = buildCacheKey(request);
 
         // Check rate limit
-        Bucket bucket = rateLimitBuckets.computeIfAbsent(ip, k -> rateLimiterConfig.createNewBucket());
+        Bucket bucket = rateLimitBuckets.computeIfAbsent(
+                request.location(),
+                k -> rateLimitBuckets.get("default"));
+
         if (!bucket.tryConsume(1)) {
-            logger.warn("Rate limit exceeded for IP: {}", ip);
+            logger.warn("Rate limit exceeded for location: {}", location);
             throw new RateLimitExceededException("Rate limit exceeded. Please try again later.");
         }
 
-        // Normalize location name for consistent caching
-        String normalizedLocation = request.location().trim().toLowerCase();
-        String cacheKey = CACHE_KEY_PREFIX + normalizedLocation;
-
-        if (request.date() != null && !request.date().isEmpty()) {
-            cacheKey += ":" + request.date();
-        }
-
+        // Try to get from cache
         try {
-            // Try to get from cache
-            WeatherResponse cachedResponse = weatherRedisTemplate.opsForValue().get(cacheKey);
-            if (cachedResponse != null) {
-                logger.info("Cache hit for location: {}", request.location());
+            Object cachedValue = redisTemplate.opsForValue().get(cacheKey);
+            if (cachedValue instanceof WeatherResponse) {
+                WeatherResponse cachedResponse = (WeatherResponse) cachedValue;
+                logger.info("Cache hit for location: {}", location);
                 return cachedResponse;
             }
+        } catch (Exception e) {
+            logger.warn("Error accessing cache: {}", e.getMessage());
+            // Continue to API call on cache error
+        }
 
-            logger.info("Cache miss for location: {}, fetching from API", request.location());
+        logger.info("Cache miss for location: {}, fetching from API", location);
+
+        // Fetch from API
+        try {
             WeatherResponse response = fetchFromApi(request);
 
             // Cache the result
             try {
-                weatherRedisTemplate.opsForValue().set(cacheKey, response, Duration.ofSeconds(cacheTtl));
-                logger.debug("Cached weather data for location: {}", request.location());
+                redisTemplate.opsForValue().set(cacheKey, response, Duration.ofSeconds(cacheTtl));
+                logger.debug("Successfully cached response for location: {}", location);
             } catch (Exception e) {
-                logger.warn("Failed to cache weather data: {}", e.getMessage());
-                // Don't fail the request if caching fails
+                logger.warn("Failed to cache response: {}", e.getMessage());
+                // Continue even if caching fails
             }
 
             return response;
-        } catch (WebClientResponseException e) {
-            logger.error("API error for location {}: {} - {}", request.location(), e.getStatusCode(), e.getMessage());
-            throw new WeatherServiceException("Error fetching weather data: " + e.getMessage(), e);
         } catch (Exception e) {
-            if (!(e instanceof RateLimitExceededException)) {
-                logger.error("Unexpected error getting weather for {}: {}", request.location(), e.getMessage(), e);
-            }
-            throw e;
+            logger.error("Error fetching weather data: {}", e.getMessage(), e);
+            throw new WeatherServiceException("Failed to retrieve weather data: " + e.getMessage());
         }
     }
 
     private WeatherResponse fetchFromApi(WeatherRequest request) {
-        String requestUrl = buildApiUrl(request);
-        logger.debug("Fetching weather data from URL: {}", requestUrl);
+        String url = buildApiUrl(request);
 
-        try {
-            JsonNode response = weatherWebClient.get()
-                    .uri(requestUrl)
-                    .retrieve()
-                    .bodyToMono(JsonNode.class)
-                    .block();
+        logger.debug("Requesting weather data from: {}", url);
 
-            return mapToWeatherResponse(response, request.location());
-        } catch (Exception e) {
-            logger.error("Error fetching data from weather API: {}", e.getMessage());
-            throw new WeatherServiceException("Failed to fetch weather data from external API", e);
-        }
+        return weatherWebClient.get()
+                .uri(url)
+                .retrieve()
+                .bodyToMono(Map.class)
+                .map(this::mapToWeatherResponse)
+                .block();
     }
 
     private String buildApiUrl(WeatherRequest request) {
-        StringBuilder urlBuilder = new StringBuilder(apiUrl);
-        urlBuilder.append("/").append(request.location());
+        StringBuilder url = new StringBuilder(apiUrl)
+                .append("/")
+                .append(request.location());
 
-        if (request.date() != null && !request.date().trim().isEmpty()) {
-            urlBuilder.append("/").append(request.date());
+        if (request.date() != null && !request.date().isEmpty()) {
+            url.append("/").append(request.date());
         }
 
-        urlBuilder.append("?unitGroup=us&key=").append(apiKey).append("&contentType=json");
-        return urlBuilder.toString();
+        url.append("?unitGroup=metric&include=days&key=").append(apiKey);
+
+        return url.toString();
     }
 
-    private WeatherResponse mapToWeatherResponse(JsonNode response, String location) {
-        if (response == null || !response.has("currentConditions")) {
-            logger.warn("Invalid response format from weather API");
-            throw new WeatherServiceException("Invalid response from weather API");
+    private String buildCacheKey(WeatherRequest request) {
+        return "weather:" + request.location() +
+                (request.date() != null ? ":" + request.date() : "");
+    }
+
+    @SuppressWarnings("unchecked")
+    private WeatherResponse mapToWeatherResponse(Map<String, Object> response) {
+        logger.debug("Mapping API response to WeatherResponse");
+
+        // Extract days forecasts
+        var days = (java.util.List<Map<String, Object>>) response.get("days");
+
+        return new WeatherResponse(
+                (String) response.get("address"),
+                (String) response.get("resolvedAddress"),
+                (String) response.get("description"),
+                getDoubleValue(response, "currentConditions.temp"),
+                (String) getNestedValue(response, "currentConditions.conditions"),
+                getDoubleValue(response, "currentConditions.humidity"),
+                getDoubleValue(response, "currentConditions.windspeed"),
+                days.stream()
+                        .map(day -> new WeatherResponse.DayForecast(
+                                (String) day.get("datetime"),
+                                getDoubleValue(day, "tempmax"),
+                                getDoubleValue(day, "tempmin"),
+                                (String) day.get("conditions"),
+                                getDoubleValue(day, "precipprob")))
+                        .toList(),
+                "Visual Crossing Weather API");
+    }
+
+    private Double getDoubleValue(Map<String, Object> data, String path) {
+        Object value = getNestedValue(data, path);
+        if (value instanceof Number) {
+            return ((Number) value).doubleValue();
         }
+        return null;
+    }
 
-        JsonNode currentConditions = response.get("currentConditions");
+    private Object getNestedValue(Map<String, Object> data, String path) {
+        String[] parts = path.split("\\.");
+        Object current = data;
 
-        // Build forecast list
-        List<DayForecast> forecast = new ArrayList<>();
-        JsonNode days = response.get("days");
-        if (days != null && days.isArray()) {
-            for (int i = 0; i < Math.min(days.size(), MAX_FORECAST_DAYS); i++) {
-                JsonNode day = days.get(i);
-                DayForecast dayForecast = new DayForecast();
-                dayForecast.setDate(day.get("datetime").asText());
-                dayForecast.setTempMax(day.get("tempmax").asDouble());
-                dayForecast.setTempMin(day.get("tempmin").asDouble());
-                dayForecast.setConditions(day.get("conditions").asText());
-                dayForecast.setPrecipProbability(day.get("precipprob").asDouble());
-                forecast.add(dayForecast);
+        for (String part : parts) {
+            if (current instanceof Map) {
+                current = ((Map<?, ?>) current).get(part);
+                if (current == null) {
+                    return null;
+                }
+            } else {
+                return null;
             }
         }
 
-        WeatherResponse weatherResponse = new WeatherResponse();
-        weatherResponse.setLocation(location);
-        weatherResponse.setResolvedAddress(response.get("resolvedAddress").asText());
-        weatherResponse.setDescription(response.get("description").asText());
-        weatherResponse.setCurrentTemp(currentConditions.get("temp").asDouble());
-        weatherResponse.setConditions(currentConditions.get("conditions").asText());
-        weatherResponse.setHumidity(currentConditions.get("humidity").asDouble());
-        weatherResponse.setWindSpeed(currentConditions.get("windspeed").asDouble());
-        weatherResponse.setForecast(forecast);
-        weatherResponse.setSource(API_SOURCE);
-
-        return weatherResponse;
+        return current;
     }
 }

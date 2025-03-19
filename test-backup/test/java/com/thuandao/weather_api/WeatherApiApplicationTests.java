@@ -106,7 +106,7 @@ class WeatherApiApplicationTests {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.result").value("SUCCESS"))
 				.andExpect(jsonPath("$.data.location").value("New York"))
-				.andExpect(jsonPath("$.data.currentTemp").value(22.5))
+				.andExpect(jsonPath("$.data.currentTemp").value(20.0))
 				.andExpect(jsonPath("$.data.conditions").value("Clear"));
 	}
 
@@ -114,25 +114,23 @@ class WeatherApiApplicationTests {
 	@Test
 	void testCachingWorks() throws Exception {
 		// Create cached weather response
-		List<DayForecast> forecast = new ArrayList<>();
-		DayForecast dayForecast = new DayForecast();
-		dayForecast.setDate("2023-06-10");
-		dayForecast.setTempMax(28.5);
-		dayForecast.setTempMin(18.2);
-		dayForecast.setConditions("Clear");
-		dayForecast.setPrecipProbability(0.0);
-		forecast.add(dayForecast);
+		WeatherResponse.DayForecast dayForecast = new WeatherResponse.DayForecast(
+				"2024-03-20",
+				25.0,
+				15.0,
+				"Sunny",
+				0.0);
 
-		WeatherResponse cachedResponse = new WeatherResponse();
-		cachedResponse.setLocation("New York");
-		cachedResponse.setResolvedAddress("New York, NY, USA");
-		cachedResponse.setDescription("Clear conditions throughout the day.");
-		cachedResponse.setCurrentTemp(22.5);
-		cachedResponse.setConditions("Clear");
-		cachedResponse.setHumidity(65.2);
-		cachedResponse.setWindSpeed(5.4);
-		cachedResponse.setForecast(forecast);
-		cachedResponse.setSource("Visual Crossing");
+		WeatherResponse cachedResponse = new WeatherResponse(
+				"New York",
+				"New York, NY",
+				"Sunny day",
+				20.0,
+				"Clear",
+				65.0,
+				10.0,
+				List.of(dayForecast),
+				"OpenWeatherMap");
 
 		// Mock Redis to return cached value
 		ValueOperations<String, WeatherResponse> valueOps = Mockito.mock(ValueOperations.class);

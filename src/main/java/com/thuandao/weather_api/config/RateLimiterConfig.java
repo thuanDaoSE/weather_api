@@ -3,7 +3,6 @@ package com.thuandao.weather_api.config;
 import java.time.Duration;
 import java.util.concurrent.ConcurrentHashMap;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -14,14 +13,9 @@ import io.github.bucket4j.Refill;
 @Configuration
 public class RateLimiterConfig {
 
-    @Value("${weather.ratelimit.capacity:10}")
-    private int capacity;
-
-    @Value("${weather.ratelimit.refill-tokens:1}")
-    private int refillTokens;
-
-    @Value("${weather.ratelimit.refill-time-unit:MINUTES}")
-    private String refillTimeUnit;
+    private static final int DEFAULT_CAPACITY = 10;
+    private static final int DEFAULT_REFILL_TOKENS = 1;
+    private static final Duration DEFAULT_REFILL_PERIOD = Duration.ofMinutes(1);
 
     @Bean
     public ConcurrentHashMap<String, Bucket> rateLimitBuckets() {
@@ -29,8 +23,8 @@ public class RateLimiterConfig {
     }
 
     public Bucket createNewBucket() {
-        return Bucket.builder()
-                .addLimit(Bandwidth.classic(capacity, Refill.intervally(refillTokens, Duration.ofMinutes(1))))
-                .build();
+        Bandwidth limit = Bandwidth.classic(DEFAULT_CAPACITY,
+                Refill.intervally(DEFAULT_REFILL_TOKENS, DEFAULT_REFILL_PERIOD));
+        return Bucket.builder().addLimit(limit).build();
     }
 }
